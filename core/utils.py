@@ -44,6 +44,7 @@ def rotate_point_cloud(points, inclination, obliquity):
     points_rotated = jnp.dot(points_rotated, R_z)
     return points_rotated
 
+@jit
 def triangle_normals(points, triangulation):
     a = points[triangulation[:,0],:]
     b = points[triangulation[:,1],:]
@@ -53,8 +54,7 @@ def triangle_normals(points, triangulation):
     # compute the center of the triangle
     center = (a + b + c) / 3
     # reverse the normal vector if the dot product is negative
-    mask = jnp.sum(normals * center, axis=1) < 0
-    normals = normals.at[mask].set(-normals[mask])
+    normals = normals*jnp.sign(jnp.sum(normals*center, axis=1))[:,jnp.newaxis]
     return normals
 
 @jit
