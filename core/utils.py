@@ -1,12 +1,9 @@
 import jax.numpy as jnp
-from jaxopt import Bisection
 import matplotlib.pyplot as plt
-from jax.lax import cond
 import jax
 from jax import grad, jit, vmap
 
 
-@jit
 def closest_polygon(thetas):
     n = jnp.rint(jnp.pi / jnp.arcsin(jnp.pi/(2*(len(thetas))*jnp.sin(thetas)))).astype(int)
     n = jnp.where(n==0,
@@ -23,14 +20,12 @@ def revolve(thetas, rtws, Ts, Fs, ns):
     theta = thetas.repeat(ns)
     return jnp.array([rtw,T, F, theta])
 
-@jit
 def spherical_to_cartesian(r, theta, phi):
     x = r * jnp.sin(theta) * jnp.cos(phi)
     y = r * jnp.cos(theta)
     z = r * jnp.sin(theta) * jnp.sin(phi)
     return jnp.array([x, y, z])
 
-@jit
 def rotate_point_cloud(points, inclination, obliquity):
     # define the rotation matrices
     R_x = jnp.array([[1, 0, 0],
@@ -44,7 +39,6 @@ def rotate_point_cloud(points, inclination, obliquity):
     points_rotated = jnp.dot(points_rotated, R_z)
     return points_rotated
 
-@jit
 def triangle_normals(points, triangulation):
     a = points[triangulation[:,0],:]
     b = points[triangulation[:,1],:]
@@ -57,7 +51,6 @@ def triangle_normals(points, triangulation):
     normals = normals*jnp.sign(jnp.sum(normals*center, axis=1))[:,jnp.newaxis]
     return normals
 
-@jit
 def barycenter(points, triangulation):
     # get the coordinates of the triangle vertices
     x = points[triangulation, 0]
@@ -71,7 +64,6 @@ def barycenter(points, triangulation):
     barycenters = jnp.stack((x_barycenter, y_barycenter, z_barycenter), axis=1)
     return barycenters
 
-@jit
 def triangle_area(points, triangulation):
     a = points[triangulation[:,0],:]
     b = points[triangulation[:,1],:]
