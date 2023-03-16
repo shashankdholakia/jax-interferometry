@@ -219,7 +219,7 @@ class ELR_Model(Base):
         #THIS IS A REALLY EXPENSIVE OPERATION TO PERFORM EVERY TIME
         dftm = compute_DFTM1(barycenter[:,0], barycenter[:,1], self.uv, self.wavel)
         ft = apply_DFTM1(intensity*weight,dftm)
-        return ft
+        return jnp.abs(ft)**2
 
 
 if __name__=="__main__":
