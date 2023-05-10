@@ -6,8 +6,12 @@ import jax
 from jax import grad, jit, vmap
 from zodiax import Base
 from scipy.spatial import ConvexHull
+import numpy as np
 
-from . import utils
+if __name__=="__main__":
+    import utils
+else:
+    from . import utils
 
 from jax.config import config
 
@@ -43,14 +47,10 @@ def eq32(omega):
 @jit
 def solve_ELR(omega, theta): #eq.26, 27, 28; solve the ELR11 equations
     """
-
     Takes a float omega where 0<=omega<1
     and a single value theta, or polar angles in radians
-
     calculates r~, Teff_ratio, and Flux_ratio
-
     Can be vmapped to solve for an array of thetas (done below)
-
     """
     #theta is the polar angle.
     #this routine calculates values for 0 <= theta <= pi/2
@@ -142,15 +142,11 @@ class ELR_Model(Base):
     model calculates oblateness and gravity darkening without an added parameter
     beta
     
-
     TODO:
-
     NEED to take into account: 4 parameter/linear limb darkening from Claret
-
     Refactor to have multiple functions to extract different observables;
     interferometric v^2 but also potentially broadband or color photometry,
     line profiles or (with model atmospheres), even polarization
-
     POSSIBLY: Interpolated model spectra
     """
     N: int
@@ -167,7 +163,6 @@ class ELR_Model(Base):
 
     def __init__(self,N,uv, wavel):
         """
-
         Args:
             N (int): Number of latitudes on the stellar grid
             uv (array): UV grid in meters
@@ -176,14 +171,14 @@ class ELR_Model(Base):
         self.N =  N
         self.uv = uv
         self.wavel = wavel
-
-        thetas = jnp.linspace(0,jnp.pi,N)
+        tol = 1e-4
+        thetas = jnp.linspace(tol,jnp.pi-tol,N)
         self.thetas=thetas
         rtws = jnp.ones_like(thetas)
         self.thetas = thetas
         ns = utils.closest_polygon(thetas)
         self.n = ns
-        phi = jnp.concatenate([jnp.linspace(0,2*jnp.pi,n, endpoint=False) for n in ns])
+        phi = jnp.concatenate([jnp.linspace(tol,2*jnp.pi-tol,n, endpoint=False) for n in ns])
         self.phi=phi
         rtw = rtws.repeat(ns)
         theta = thetas.repeat(ns)
@@ -208,26 +203,87 @@ class ELR_Model(Base):
         # compute the normal vectors
         normals = utils.triangle_normals(points_rotated, self.triangulation)
 
+        #compute the x, y, z coordinates of each barycenter (barycenter vector)
         barycenter = utils.barycenter(points_rotated,self.triangulation)
+        #find the intensity of the star at each barycenter (mean of the intensity at the corners of the triangle)
         intensity = jnp.mean(F[self.triangulation], axis=1)
         #temperature = jnp.mean(T[self.triangulation],axis=1)
         # compute the areas of the triangles
         areas = utils.triangle_area(points_rotated, self.triangulation)
         cosine = jnp.dot(jnp.array([0,0,1]),normals.T)
+        #apply a step function weight along with the contribution of flux towards the observer
+        #should 0 the intensities in the non-visible portion of the star (behind the star)
         weight = jnp.heaviside(cosine,0)*cosine
 
         #THIS IS A REALLY EXPENSIVE OPERATION TO PERFORM EVERY TIME
         dftm = compute_DFTM1(barycenter[:,0], barycenter[:,1], self.uv, self.wavel)
         ft = apply_DFTM1(intensity*weight,dftm)
         return jnp.abs(ft)**2
+    
+    def plot(self,omega, r_eq, inc, obl, ax=None):
+        
+        rtws, Ts, Fs = solve_ELR_vec(omega, self.thetas)
+        rtw = rtws.repeat(self.n)
+        T = Ts.repeat(self.n)
+        F = Fs.repeat(self.n)
+        theta = self.thetas.repeat(self.n)
+
+        x, y, z = utils.spherical_to_cartesian(rtw,theta,self.phi)
+        points = r_eq*jnp.stack([x,y,z],axis=1)
+
+        points_rotated = utils.rotate_point_cloud(points, -inc, obl)
+        # compute the normal vectors
+        normals = utils.triangle_normals(points_rotated, self.triangulation)
+
+        #compute the barycenter vector (x,y,z of each barycenter)
+        barycenter = utils.barycenter(points_rotated,self.triangulation)
+        #take the intensity at each barycenter (mean of the values at each triangle)
+        #same for temperature
+        intensity = jnp.mean(F[self.triangulation], axis=1)
+        temperature = jnp.mean(T[self.triangulation],axis=1)
+        # compute the areas of the triangles
+        areas = utils.triangle_area(points_rotated, self.triangulation)
+        #take the contribution towards the observer
+        cosine = jnp.dot(jnp.array([0,0,1]),normals.T)
+        #apply a step function weight such that the behind of the star is 0d in intensity
+        mask = jnp.where(normals[:,2] > 0, True, False)
+        colors = (intensity[mask]).astype(np.float32)
+        barycenters_projected = jnp.delete(barycenter, 2, axis=1)
+        if ax is None:
+            c = plt.tripcolor(points_rotated[:,0], points_rotated[:,1],triangles=self.triangulation[mask], facecolors=colors,edgecolors='k');
+            plt.colorbar(c)
+            plt.plot(barycenters_projected[mask,0], barycenters_projected[mask,1], 'ko',ms=0.2);
+            plt.gca().set_aspect('equal')
+        else:
+            c = ax.tripcolor(points_rotated[:,0], points_rotated[:,1],triangles=self.triangulation[mask], facecolors=colors,edgecolors='k', cmap='plasma',lw=0.3);
+            ax.set_xlim([-r_eq*1.1,r_eq*1.1])
+            ax.set_ylim([-r_eq*1.1,r_eq*1.1])
+            
+            def colorbar(mappable):
+                from mpl_toolkits.axes_grid1 import make_axes_locatable
+                import matplotlib.pyplot as plt
+                last_axes = plt.gca()
+                ax = mappable.axes
+                fig = ax.figure
+                divider = make_axes_locatable(ax)
+                cax = divider.append_axes("right", size="5%", pad=0.05)
+                cbar = fig.colorbar(mappable, cax=cax)
+                plt.sca(last_axes)
+                return cbar
+            
+            colorbar(c)
+            #ax.plot(barycenters_projected[mask,0], barycenters_projected[mask,1], 'ko',ms=0.2);
+            ax.set_aspect('equal')
+    
+
 
 
 if __name__=="__main__":
-    thetas = jnp.linspace(0.0, jnp.pi/2,100)
+    theta = jnp.pi/4
     #theta = 0.01
     omega = 0.8
-    rtws, Ts, Fs = solve_ELR_vec(omega, self.theta)
-
-    print(Fs)
+    rtws, Ts, Fs = solve_ELR(omega, theta)
+    r = y(theta, omega)
+    
     print(rtws)
-    print(thetas)
+    print(r)

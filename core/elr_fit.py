@@ -39,21 +39,21 @@ class FitELR:
         """
 
         Args:
-            l1l2res (str): file path for the reduced data from PAVO (should be called something_l0l1.res_l1l2.res, meaning it's been through both stages of pipeline calibration)
+            l1l2res (str): file path for the reduced data from PAVO (should be called something_l1l2.csv, meaning it's been through both stages of pipeline calibration)
             HDnum (str): HD number of the fil in the format, e.g "HD_84999"
             outputs (str): folder where to put all the output plots and files
             cpus (int): how many cpus to use, defaults to 2
             method (str, optional): Fitting method to use, whether gradient based (NUTS), or nested sampling ("NS"). Defaults to "NUTS".
         """
         
-        df = pd.read_csv(l1l2res,delim_whitespace=True,comment='#',header=0)
+        df = pd.read_csv(l1l2res)
         #remove bad data (negative errors, above 1 or below 0 visibility)
-        df = df[(df.V2CALERR>0.0) & (df.V2CAL<1.0) & (df.V2CAL>0.0)]
-        self.u = df[df['STAR']==hdnum]['UCOORDS'].values
-        self.v = df[df['STAR']==hdnum]['VCCORDS'].values
-        self.wav = df[df['STAR']==hdnum]['LAMBDA'].values
-        self.v2 = df[df['STAR']==hdnum]['V2CAL'].values
-        self.v2_err = df[df['STAR']==hdnum]['V2CALERR'].values
+        df = df[(df.cal_v2sig>0.0) & (df.cal_v2<1.0) & (df.cal_v2>0.0)]
+        self.u = df[df['Star']==hdnum]['u'].values*1e-6
+        self.v = df[df['Star']==hdnum]['v'].values*1e-6
+        self.wav = df[df['Star']==hdnum]['wl'].values
+        self.v2 = df[df['Star']==hdnum]['cal_v2'].values
+        self.v2_err = df[df['Star']==hdnum]['cal_v2sig'].values
         
         self.l1l2res = l1l2res
         self.hdnum = hdnum
@@ -75,7 +75,7 @@ class FitELR:
         """
         uvgrid = jnp.vstack([self.u,self.v]).T
         wavels = jnp.vstack([self.wav*1e-6,self.wav*1e-6]).T
-        rr = ELR_Model(32,uvgrid,wavels)
+        rr = ELR_Model(33,uvgrid,wavels)
         
         #define the projected baselines 
         x = jnp.hypot(self.u/(self.wav*1e-6),self.v/(self.wav*1e-6))
@@ -96,8 +96,9 @@ class FitELR:
             omega = numpyro.sample("omega", dist.Uniform(0.0, 0.99))
             inc = numpyro.sample("inc", dist.Uniform(0, jnp.pi/2))
             numpyro.factor('isotropy', jnp.log(jnp.cos(inc)))
-            jitter = numpyro.sample("logsig", dist.Normal(loc=jnp.log(0.01),scale=5.0))
-            obl = numpyro.sample("obl", dist.Uniform(-jnp.pi, jnp.pi))
+            jitter = numpyro.sample("logsig", dist.Normal(loc=jnp.log(0.001),scale=3.0))
+            #obliquities rotated by 180 degrees are analytically degenerate without phases
+            obl = numpyro.sample("obl", dist.Uniform(0, jnp.pi))
             numpyro.sample("y", dist.Normal(rr(omega,diam/2,inc,obl), jnp.sqrt(yerr**2 + jnp.exp(jitter)**2)), obs=y)
 
         if self.method=='NUTS':
@@ -108,7 +109,7 @@ class FitELR:
                 num_chains=2,
                 progress_bar=True)
 
-            sampler.run(jax.random.PRNGKey(0), yerr, y=y)
+            sampler.run(jax.random.PRNGKey(1), yerr, y=y)
             inf_data = az.from_numpyro(sampler)
             inf_data.to_netcdf(os.path.join(self.outputs, (self.hdnum+'_'+self.method+'.h5')))
         elif self.method=='NS':
@@ -119,17 +120,45 @@ class FitELR:
             inf_data = az.from_dict(ns_samples)
             inf_data.to_netcdf(os.path.join(self.outputs, self.hdnum+'_'+self.method+'.h5'))
             
-    def create_plots(self):
+    def create_plots(self, star_name):
         
         #first create the baselines plot
         uvgrid = jnp.vstack([self.u,self.v]).T
         wavels = jnp.vstack([self.wav*1e-6,self.wav*1e-6]).T
-        rr = ELR_Model(32,uvgrid,wavels)
+        rr = ELR_Model(33,uvgrid,wavels)
+        
+        #get the posterior samples (should be agnostic to method)
+        inf_data = az.from_netcdf(os.path.join(self.outputs, self.hdnum+'_'+self.method+'.h5'))
+        
+        #get the median posterior samples
+        diam = np.median(inf_data.posterior.diam.values)
+        inc = np.median(inf_data.posterior.inc.values)
+        obl = np.median(inf_data.posterior.obl.values)
+        omega = np.median(inf_data.posterior.omega.values)
+        jitter = np.exp(np.median(inf_data.posterior.logsig.values))
+        
+        print("Median diameter is " + str(diam))
+        print("Median inclination is " + str(np.degrees(inc)))
+        print("Median obliquity is " + str(np.degrees(obl)))
+        print("Median omega is " + str(omega))
+        print("Median jitter is " + str(jitter))
+        
+        plt.figure()
+        rr.plot(omega, diam/2, inc, obl)
+        plt.suptitle(star_name, fontsize=24)
+        plt.savefig(os.path.join(self.outputs, self.hdnum+'_star.png'), dpi=300)
         
         #define the projected baselines 
         x = jnp.hypot(self.u/(self.wav*1e-6),self.v/(self.wav*1e-6))
         #baseline angles
-        theta = jnp.arctan(self.v/self.u)
+        theta = jnp.arctan2(self.v,self.u)
+        
+        plt.clf()
+        median_model = rr(omega, diam/2, inc, obl)
+        plt.errorbar(self.v2, median_model, yerr=jnp.sqrt(self.v2_err**2), fmt="ok", ms=1, capsize=0, lw=1)
+        plt.plot([0,1.0],[0,1.0])
+        plt.suptitle(star_name, fontsize=24)
+        plt.savefig(os.path.join(self.outputs, self.hdnum+'_corr.png'), dpi=300)
         
         if colorpy_exists:
             irgb = []
@@ -145,9 +174,6 @@ class FitELR:
         plt.ylabel(r"V (baseline/$\lambda$)")
         plt.savefig(os.path.join(self.outputs, self.hdnum+'_baselines.png'), dpi=300)
         
-        #get the posterior samples (should be agnostic to method)
-        inf_data = az.from_netcdf(os.path.join(self.outputs, self.hdnum+'_'+self.method+'.h5'))
-        
         #save the HMC trace if the method is NUTS, otherwise this doesn't make sense
         if self.method=='NUTS':
             az.plot_trace(inf_data, var_names=('diam','omega','inc','obl', 'logsig'));
@@ -157,17 +183,11 @@ class FitELR:
         
         #save the plot of the visibility squared overplotted with the final model
         cmap = plt.get_cmap("hsv")
-        cmap2 = plt.get_cmap("viridis")
+        #cmap2 = plt.get_cmap("viridis")
 
-        #get the median posterior samples
-        diam = np.median(inf_data.posterior.diam.values)
-        inc = np.median(inf_data.posterior.inc.values)
-        obl = np.median(inf_data.posterior.obl.values)
-        omega = np.median(inf_data.posterior.omega.values)
-        jitter = np.exp(np.median(inf_data.posterior.logsig.values))
 
         x = jnp.hypot(self.u/(self.wav*1e-6),self.v/(self.wav*1e-6))
-        theta = jnp.arctan(self.v/self.u)
+        theta = jnp.arctan2(self.v,self.u)
         y = self.v2
         #add the errors in quadrature
         yerr = np.sqrt(self.v2_err**2+jitter**2)
@@ -193,38 +213,53 @@ class FitELR:
 
         def plot_data(x,y, theta, x0, y0, yerr, y0s, wavels=self.wav*1e-6, ax=None, alpha=1):
             if ax is None:
-                fig, ax = plt.subplots(1,2, figsize=(20,5), sharey=True)
-            ax[0].errorbar(x, y, yerr=yerr, fmt=",k", ms=0, capsize=0, lw=1, zorder=999)
+                fig, ax = plt.subplots(1,2, figsize=(15,5),gridspec_kw={'width_ratios':[1,2]})
+            ax[1].errorbar(x, y, yerr=yerr, fmt=",k", ms=0, capsize=0, lw=1, zorder=999)
             
         #     if wavels is not None:
-            ax[0].scatter(x, y, marker="s", s=30, edgecolor="k", zorder=1000, c=cmap(theta))
+            c = ax[1].scatter(x, y, marker="s", s=30, edgecolor="k", zorder=1000, c=theta, cmap='twilight')
         #     else:
         #         ax[0].scatter(x, y, marker="s", s=30, edgecolor="k", zorder=1000, c=cmap(x))
             inds = np.argsort(x0)
-            ax[0].plot(x0[inds], y0[inds], color="k", lw=1.5, alpha=alpha)
-            ax[0].set_xlabel("baseline/$\lambda$", fontsize=20)
-            ax[0].set_ylabel("$V^2$", fontsize=20)
-            ax[0].set_ylim(0, 1.2)
-                
+            ax[1].plot(x0[inds], y0[inds], color="k", lw=1.5, alpha=alpha)
+            ax[1].set_xlabel("baseline/$\lambda$", fontsize=20)
+            ax[1].set_ylabel("$V^2$", fontsize=20)
+            ax[1].set_ylim(0, 1.2)
+            cbar = fig.colorbar(c,ax=ax[1])
+            cbar.set_label(r'$\theta$')
             
             for i in y0s:
                 inds = np.argsort(x0)
-                ax[0].plot(x0[inds], i[inds], "k", alpha=0.1)
+                ax[1].plot(x0[inds], i[inds], "k", alpha=0.1)
             
-            ax[1].errorbar(theta, y, yerr=yerr, fmt=",k", ms=0, capsize=0, lw=1, zorder=999)        
-            ax[1].scatter(theta, y, marker="s", s=30, edgecolor="k", zorder=1000)
-            ax[1].set_xlabel(r"$\theta$", fontsize=20)
-            ax[1].set_ylabel("$V^2$", fontsize=20)
-            ax[1].set_ylim(0, 1.2)
+            #ax[1].errorbar(theta, y, yerr=yerr, fmt=",k", ms=0, capsize=0, lw=1, zorder=999)        
+            #ax[1].scatter(theta, y, marker="s", s=30, edgecolor="k", zorder=1000)
+            #ax[1].set_xlabel(r"$\theta$", fontsize=20)
+            #ax[1].set_ylabel("$V^2$", fontsize=20)
+            #ax[1].set_ylim(0, 1.2)
             
-            return ax
+            return fig,ax
 
+        #get the median posterior samples
+        diam = np.median(inf_data.posterior.diam.values)
+        inc = np.median(inf_data.posterior.inc.values)
+        obl = np.median(inf_data.posterior.obl.values)
+        omega = np.median(inf_data.posterior.omega.values)
+        
+        fig,ax = plot_data(x,y,theta,x0,y0,yerr, y0s)
+        
+        rr.plot(omega, diam/2, inc, obl, ax=ax[0])
+        ax[0].set_xlabel("X (mas)")
+        ax[0].set_ylabel("Y (mas)")
 
-        ax = plot_data(x,y,theta,x0,y0,yerr, y0s)
-        plt.savefig(os.path.join(self.outputs, self.hdnum+'_v2.png'),dpi=300)
+        plt.suptitle(star_name, fontsize=24)
+        plt.savefig(os.path.join(self.outputs, self.hdnum+'_v2_2.pdf'))
         
         corner.corner(inf_data, var_names=('omega','diam','inc','obl','logsig'))
+        plt.suptitle(star_name, fontsize=24)
         plt.savefig(os.path.join(self.outputs, self.hdnum+'_corner.png'),dpi=300)
+        
+        
 
 
 if __name__=="__main__":
@@ -232,7 +267,18 @@ if __name__=="__main__":
     Run from inside the interferometry folder using:
     python -m core.elr_fit
     """
-    upsuma = FitELR("/Users/uqsdhola/Projects/Interferometry/tests/upsUMa_l0l1.res_l1l2.res", 'HD_84999', 'upsUma', cpus=2, method="NS")
-    #upsuma.fit(2.0)
-    upsuma.create_plots()
+    #upstau  = FitELR("/Users/uqsdhola/Projects/Interferometry/data/upsTau/pavlist_l1l2.csv", 'HD_28024', 'upsTau', cpus=2, method="NUTS")
+    #upstau.fit(1.5)
+    #upstau.create_plots(star_name=r'$\upsilon$ Tau')
     
+    upsuma = FitELR("/Users/uqsdhola/Projects/Interferometry/data/upsUMa/pavlist_l1l2.csv", 'HD_84999', 'upsUMa', cpus=2, method="NUTS")
+    upsuma.fit(1.8)
+    upsuma.create_plots(star_name=r'$\upsilon$ UMa')
+    
+    #epscep = FitELR("/Users/uqsdhola/Projects/Interferometry/data/epsCep/pavlist_l1l2.csv", 'HD_211336', 'epsCep', cpus=2, method="NUTS")
+    #epscep.fit(2.0)
+    #epscep.create_plots(star_name=r'$\epsilon$ Cep')
+    
+    #lamboo  = FitELR("/Users/uqsdhola/Projects/Interferometry/data/lamBoo/pavlist_l1l2.csv", 'HD_125162', 'lamBoo', cpus=2, method="NUTS")
+    #lamboo.fit(2.0)
+    #lamboo.create_plots(star_name=r'$\lambda$ Boo')  
