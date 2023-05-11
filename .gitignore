@@ -99,6 +99,7 @@ __pypackages__/
 celerybeat-schedule
 celerybeat.pid
 
+
 # SageMath parsed files
 *.sage.py
 
@@ -114,6 +115,9 @@ venv.bak/
 # Spyder project settings
 .spyderproject
 .spyproject
+
+# Vscode files
+.vscode
 
 # Rope project settings
 .ropeproject

@@ -1,5 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib import cm
+import matplotlib
 #this is the way I've found to get jax to use multiple CPU cores on Apple Silicon
 import os
 os.environ["XLA_FLAGS"] = "--xla_force_host_platform_device_count=2"
@@ -75,7 +77,7 @@ class FitELR:
         """
         uvgrid = jnp.vstack([self.u,self.v]).T
         wavels = jnp.vstack([self.wav*1e-6,self.wav*1e-6]).T
-        rr = ELR_Model(33,uvgrid,wavels)
+        rr = ELR_Model(32,uvgrid,wavels)
         
         #define the projected baselines 
         x = jnp.hypot(self.u/(self.wav*1e-6),self.v/(self.wav*1e-6))
@@ -109,7 +111,7 @@ class FitELR:
                 num_chains=2,
                 progress_bar=True)
 
-            sampler.run(jax.random.PRNGKey(1), yerr, y=y)
+            sampler.run(jax.random.PRNGKey(0), yerr, y=y)
             inf_data = az.from_numpyro(sampler)
             inf_data.to_netcdf(os.path.join(self.outputs, (self.hdnum+'_'+self.method+'.h5')))
         elif self.method=='NS':
@@ -151,7 +153,6 @@ class FitELR:
         #define the projected baselines 
         x = jnp.hypot(self.u/(self.wav*1e-6),self.v/(self.wav*1e-6))
         #baseline angles
-        theta = jnp.arctan2(self.v,self.u)
         
         plt.clf()
         median_model = rr(omega, diam/2, inc, obl)
@@ -170,8 +171,16 @@ class FitELR:
             irgb = cm.jet(self.wav)
             
         plt.scatter(self.u/(self.wav*1e-6),self.v/(self.wav*1e-6), c=irgb)
+        
         plt.xlabel(r"U (baseline/$\lambda$)")
         plt.ylabel(r"V (baseline/$\lambda$)")
+
+        theta0 = jnp.unique(jnp.arctan2(self.v,self.u))
+        uvmax = np.sqrt((self.u.max()/(np.mean(self.wav*1e-6)))**2 + (self.v.max()/(np.mean(self.wav*1e-6)))**2)
+        cmap = plt.get_cmap("twilight_shifted")
+        norm = matplotlib.colors.Normalize(vmin=0, vmax=np.pi)
+        rgba = cmap(norm(theta0))
+        plt.scatter(np.cos(theta0)*uvmax, np.sin(theta0)*uvmax, c=rgba)
         plt.savefig(os.path.join(self.outputs, self.hdnum+'_baselines.png'), dpi=300)
         
         #save the HMC trace if the method is NUTS, otherwise this doesn't make sense
@@ -187,56 +196,60 @@ class FitELR:
 
 
         x = jnp.hypot(self.u/(self.wav*1e-6),self.v/(self.wav*1e-6))
+
         theta = jnp.arctan2(self.v,self.u)
         y = self.v2
         #add the errors in quadrature
         yerr = np.sqrt(self.v2_err**2+jitter**2)
 
         #get the median model
-        u0 = np.linspace(self.u.min()/(np.mean(self.wav*1e-6)),self.u.max()/(np.mean(self.wav*1e-6)),64)
-        v0 = np.linspace(self.v.min()/(np.mean(self.wav*1e-6)),self.v.max()/(np.mean(self.wav*1e-6)),64)
-        uu, vv = np.meshgrid(u0,v0)
-        uv0 = np.vstack((uu.flatten(),vv.flatten())).T
-        x0 = jnp.hypot(uu,vv).flatten()
-        theta0 = jnp.arctan2(vv.flatten(),uu.flatten())
-        rr0 = ELR_Model(31,uv0,1.0)
-        y0 = rr0(omega,diam/2.0,inc,obl)
-
+        theta0 = np.linspace(0,np.pi,100) #jnp.unique(jnp.arctan2(self.v,self.u))
+        x0s = []
         y0s = []
-        diams = np.random.choice(np.concatenate(inf_data.posterior.diam.values), 10)
-        incs = np.random.choice(np.concatenate(inf_data.posterior.inc.values), 10)
-        obls = np.random.choice(np.concatenate(inf_data.posterior.obl.values), 10)
-        omegas = np.random.choice(np.concatenate(inf_data.posterior.omega.values), 10)
-
-        for diam,inc,obl,omega  in zip(diams,incs,obls,omegas):
+        uvmax = np.sqrt((self.u.max()/(np.mean(self.wav*1e-6)))**2 + (self.v.max()/(np.mean(self.wav*1e-6)))**2)
+        latent = np.linspace(0,uvmax,200)
+        for i in theta0:
+            u0 = np.cos(i)*latent
+            v0 = np.sin(i)*latent
+            x0s.append(jnp.hypot(u0,v0))
+            uv0 = jnp.vstack([u0,v0]).T
+            rr0 = ELR_Model(31,uv0,1.0)
             y0s.append(rr0(omega,diam/2.0,inc,obl))
 
-        def plot_data(x,y, theta, x0, y0, yerr, y0s, wavels=self.wav*1e-6, ax=None, alpha=1):
+ 
+
+        def plot_data(x,y, theta, theta0, x0s, y0s, yerr, wavels=self.wav*1e-6, ax=None, alpha=1):
+            gkw = {'width_ratios':[1,2]}
             if ax is None:
-                fig, ax = plt.subplots(1,2, figsize=(15,5),gridspec_kw={'width_ratios':[1,2]})
-            ax[1].errorbar(x, y, yerr=yerr, fmt=",k", ms=0, capsize=0, lw=1, zorder=999)
+                fig, ax = plt.subplots(1,2, figsize=(16,4.8),gridspec_kw=gkw)
+            ax[1].errorbar(x, y, yerr=yerr, fmt=",k", ms=0, capsize=0, lw=0.3, zorder=999)
             
         #     if wavels is not None:
-            c = ax[1].scatter(x, y, marker="s", s=30, edgecolor="k", zorder=1000, c=theta, cmap='twilight')
+            norm = matplotlib.colors.Normalize(vmin=0, vmax=np.pi)
+            cmap = plt.get_cmap("twilight_shifted")
+            rgba = cmap(norm(theta))
+            c = ax[1].scatter(x, y, marker="s", s=15, edgecolor="k", zorder=1000, c=rgba, linewidth=0.4)
         #     else:
         #         ax[0].scatter(x, y, marker="s", s=30, edgecolor="k", zorder=1000, c=cmap(x))
-            inds = np.argsort(x0)
-            ax[1].plot(x0[inds], y0[inds], color="k", lw=1.5, alpha=alpha)
-            ax[1].set_xlabel("baseline/$\lambda$", fontsize=20)
-            ax[1].set_ylabel("$V^2$", fontsize=20)
-            ax[1].set_ylim(0, 1.2)
-            cbar = fig.colorbar(c,ax=ax[1])
+            for t, x0, y0 in zip(theta0, x0s, y0s):
+                #inds = np.argsort(x0)
+                rgba = cmap(norm(t))
+                ax[1].plot(x0, y0, c=rgba, lw=1,zorder=int(np.degrees(np.pi-t)))
+            ax[1].set_xlabel("baseline/$\lambda$", fontsize=14)
+            ax[1].set_ylabel("visibility$^2$", fontsize=14)
+            ax[1].set_ylim(0, 1.15)
+            ax[1].set_aspect('auto')
+
+            cbar = fig.colorbar(cm.ScalarMappable(norm=norm,cmap=cmap), ax=ax[1],fraction=0.024, pad=0.01)
             cbar.set_label(r'$\theta$')
             
-            for i in y0s:
-                inds = np.argsort(x0)
-                ax[1].plot(x0[inds], i[inds], "k", alpha=0.1)
+
             
-            #ax[1].errorbar(theta, y, yerr=yerr, fmt=",k", ms=0, capsize=0, lw=1, zorder=999)        
-            #ax[1].scatter(theta, y, marker="s", s=30, edgecolor="k", zorder=1000)
-            #ax[1].set_xlabel(r"$\theta$", fontsize=20)
-            #ax[1].set_ylabel("$V^2$", fontsize=20)
-            #ax[1].set_ylim(0, 1.2)
+            ya = np.diff(np.array(ax[1].get_ylim()))[0]
+            xa = np.diff(np.array(ax[1].get_xlim()))[0]
+            wa = gkw['width_ratios'][0]/float(gkw['width_ratios'][1])
+            ia = 0.992
+            ax[1].set_aspect(float(wa*ia/(ya/xa)))
             
             return fig,ax
 
@@ -246,14 +259,15 @@ class FitELR:
         obl = np.median(inf_data.posterior.obl.values)
         omega = np.median(inf_data.posterior.omega.values)
         
-        fig,ax = plot_data(x,y,theta,x0,y0,yerr, y0s)
+        fig,ax = plot_data(x,y, theta, theta0, x0s, y0s, yerr)
         
         rr.plot(omega, diam/2, inc, obl, ax=ax[0])
-        ax[0].set_xlabel("X (mas)")
-        ax[0].set_ylabel("Y (mas)")
+        ax[0].set_xlabel("X (mas)", fontsize=14)
+        ax[0].set_ylabel("Y (mas)", fontsize=14)
+        plt.subplots_adjust(wspace=0.3)
 
         plt.suptitle(star_name, fontsize=24)
-        plt.savefig(os.path.join(self.outputs, self.hdnum+'_v2_2.pdf'))
+        plt.savefig(os.path.join(self.outputs, self.hdnum+'.png'),dpi=500)
         
         corner.corner(inf_data, var_names=('omega','diam','inc','obl','logsig'))
         plt.suptitle(star_name, fontsize=24)
@@ -267,18 +281,19 @@ if __name__=="__main__":
     Run from inside the interferometry folder using:
     python -m core.elr_fit
     """
-    #upstau  = FitELR("/Users/uqsdhola/Projects/Interferometry/data/upsTau/pavlist_l1l2.csv", 'HD_28024', 'upsTau', cpus=2, method="NUTS")
-    #upstau.fit(1.5)
-    #upstau.create_plots(star_name=r'$\upsilon$ Tau')
     
     upsuma = FitELR("/Users/uqsdhola/Projects/Interferometry/data/upsUMa/pavlist_l1l2.csv", 'HD_84999', 'upsUMa', cpus=2, method="NUTS")
-    upsuma.fit(1.8)
+    upsuma.fit(2.0)
     upsuma.create_plots(star_name=r'$\upsilon$ UMa')
     
-    #epscep = FitELR("/Users/uqsdhola/Projects/Interferometry/data/epsCep/pavlist_l1l2.csv", 'HD_211336', 'epsCep', cpus=2, method="NUTS")
-    #epscep.fit(2.0)
-    #epscep.create_plots(star_name=r'$\epsilon$ Cep')
+    epscep = FitELR("/Users/uqsdhola/Projects/Interferometry/data/epsCep/pavlist_l1l2.csv", 'HD_211336', 'epsCep', cpus=2, method="NUTS")
+    epscep.fit(2.0)
+    epscep.create_plots(star_name=r'$\epsilon$ Cep')
     
-    #lamboo  = FitELR("/Users/uqsdhola/Projects/Interferometry/data/lamBoo/pavlist_l1l2.csv", 'HD_125162', 'lamBoo', cpus=2, method="NUTS")
-    #lamboo.fit(2.0)
-    #lamboo.create_plots(star_name=r'$\lambda$ Boo')  
+    lamboo  = FitELR("/Users/uqsdhola/Projects/Interferometry/data/lamBoo/pavlist_l1l2.csv", 'HD_125162', 'lamBoo', cpus=2, method="NUTS")
+    lamboo.fit(2.0)
+    lamboo.create_plots(star_name=r'$\lambda$ Boo')  
+    
+    upstau  = FitELR("/Users/uqsdhola/Projects/Interferometry/data/upsTau/pavlist_l1l2.csv", 'HD_28024', 'upsTau', cpus=2, method="NUTS")
+    upstau.fit(2.0)
+    upstau.create_plots(star_name=r'$\upsilon$ Tau')      
