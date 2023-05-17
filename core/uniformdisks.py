@@ -33,3 +33,12 @@ def vis_ud(d,u,v):
     diam = d*mas2rad
     t = jinc(jnp.pi*diam*r)
     return t
+
+def vis_ellipse_disk(semi_axis,ecc,theta,u,v):
+    
+    semi_axis = semi_axis
+    thetad = theta #jnp.pi*theta/180.
+    u1, v1 = u*jnp.cos(thetad)+v*jnp.sin(thetad), -u*jnp.sin(thetad)+v*jnp.cos(thetad)
+    u1, v1 = u1, v1*jnp.sqrt(1-ecc**2.)
+    
+    return vis_ud(2*semi_axis,u1,v1)**2
