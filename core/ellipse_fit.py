@@ -38,6 +38,7 @@ try:
 except:
     colorpy_exists=False
     from matplotlib import cm
+import pickle
         
 class FitEllipse:
     def __init__(self,l1l2res, hdnum, outputs, cpus=2, method="NUTS"):
@@ -176,7 +177,8 @@ class FitEllipse:
         for a_sample, b_sample, angle_sample in zip(rad_s, b_s, angle_s):
             # Add ellipse patch to axis
             ax.add_patch(Ellipse(xy=(0, 0), width=2*a_sample, height=2*b_sample, angle=np.rad2deg(angle_sample), edgecolor='black', facecolor='none', alpha=0.1))
-            
+        
+        pickle.dump((fig, ax), open(os.path.join(self.outputs, self.hdnum+'_ellipse_star.pickle'), 'wb'))
         plt.savefig(os.path.join(self.outputs, self.hdnum+'_ellipse_star.png'), dpi=300)
         #define the projected baselines 
         x = jnp.hypot(self.u/(self.wav*1e-6),self.v/(self.wav*1e-6))

@@ -35,7 +35,8 @@ try:
 except:
     colorpy_exists=False
     from matplotlib import cm
-        
+import pickle
+
 class FitELR:
     def __init__(self,l1l2res, hdnum, outputs, cpus=2, method="NUTS"):
         """
@@ -156,7 +157,7 @@ class FitELR:
         obl_samples = np.random.choice(np.concatenate(inf_data.posterior.obl.values), 30)
         omega_samples = np.random.choice(np.concatenate(inf_data.posterior.omega.values), 30)
         
-        fig, ax = plt.subplots(1,1)
+        fig, ax = pickle.load(open("/Users/uqsdhola/Projects/Interferometry/"+self.outputs+"/ellipse/"+self.hdnum+"_ellipse_star.pickle",'rb'))
         
         rr.plot_shell(omega, diam/2, inc, obl, ax=ax, alpha=1.0)
         

@@ -315,7 +315,7 @@ class ELR_Model(Base):
         
         if ax is None:
             for simplex in shell.simplices:
-                plt.plot(barycenters_projected[simplex, 0], barycenters_projected[simplex, 1], 'k-',alpha=alpha)
+                plt.plot(barycenters_projected[simplex, 0], barycenters_projected[simplex, 1], 'C3-',alpha=alpha)
             plt.gca().set_aspect('equal')
             plt.xlim([-r_eq*1.1,r_eq*1.1])
             plt.ylim([-r_eq*1.1,r_eq*1.1])
@@ -323,7 +323,7 @@ class ELR_Model(Base):
             ax.set_xlim([-r_eq*1.1,r_eq*1.1])
             ax.set_ylim([-r_eq*1.1,r_eq*1.1])
             for simplex in shell.simplices:
-                ax.plot(barycenters_projected[simplex, 0], barycenters_projected[simplex, 1], 'k-',alpha=alpha)
+                ax.plot(barycenters_projected[simplex, 0], barycenters_projected[simplex, 1], 'C3-',alpha=alpha)
             ax.set_aspect('equal')
 
 #if __name__=="__main__":
