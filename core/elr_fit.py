@@ -149,7 +149,29 @@ class FitELR:
         rr.plot(omega, diam/2, inc, obl)
         plt.suptitle(star_name, fontsize=24)
         plt.savefig(os.path.join(self.outputs, self.hdnum+'_star.png'), dpi=300)
+
+        #get the median posterior samples
+        diam_samples = np.random.choice(np.concatenate(inf_data.posterior.diam.values), 30)
+        inc_samples = np.random.choice(np.concatenate(inf_data.posterior.inc.values), 30)
+        obl_samples = np.random.choice(np.concatenate(inf_data.posterior.obl.values), 30)
+        omega_samples = np.random.choice(np.concatenate(inf_data.posterior.omega.values), 30)
         
+        fig, ax = plt.subplots(1,1)
+        
+        rr.plot_shell(omega, diam/2, inc, obl, ax=ax, alpha=1.0)
+        
+        for diam_sample, inc_sample,obl_sample,omega_sample in zip(diam_samples, inc_samples, obl_samples, omega_samples):
+            rr.plot_shell(omega_sample, diam_sample/2, inc_sample, obl_sample, ax=ax, alpha=0.1)
+        plt.suptitle(star_name, fontsize=24)
+        plt.savefig(os.path.join(self.outputs, self.hdnum+'_shells_star.png'), dpi=300)
+        
+        
+        plt.figure()
+        rr.plot(omega, diam/2, inc, obl)
+        plt.suptitle(star_name, fontsize=24)
+        plt.savefig(os.path.join(self.outputs, self.hdnum+'_star.png'), dpi=300)
+        
+                
         #define the projected baselines 
         x = jnp.hypot(self.u/(self.wav*1e-6),self.v/(self.wav*1e-6))
         #baseline angles
@@ -215,6 +237,7 @@ class FitELR:
             uv0 = jnp.vstack([u0,v0]).T
             rr0 = ELR_Model(31,uv0,1.0)
             y0s.append(rr0(omega,diam/2.0,inc,obl))
+            
 
  
 
@@ -283,17 +306,17 @@ if __name__=="__main__":
     """
     
     upsuma = FitELR("/Users/uqsdhola/Projects/Interferometry/data/upsUMa/pavlist_l1l2.csv", 'HD_84999', 'upsUMa', cpus=2, method="NUTS")
-    upsuma.fit(2.0)
+    #upsuma.fit(2.0)
     upsuma.create_plots(star_name=r'$\upsilon$ UMa')
     
     epscep = FitELR("/Users/uqsdhola/Projects/Interferometry/data/epsCep/pavlist_l1l2.csv", 'HD_211336', 'epsCep', cpus=2, method="NUTS")
-    epscep.fit(2.0)
+    #epscep.fit(2.0)
     epscep.create_plots(star_name=r'$\epsilon$ Cep')
     
     lamboo  = FitELR("/Users/uqsdhola/Projects/Interferometry/data/lamBoo/pavlist_l1l2.csv", 'HD_125162', 'lamBoo', cpus=2, method="NUTS")
-    lamboo.fit(2.0)
+    #lamboo.fit(2.0)
     lamboo.create_plots(star_name=r'$\lambda$ Boo')  
     
     upstau  = FitELR("/Users/uqsdhola/Projects/Interferometry/data/upsTau/pavlist_l1l2.csv", 'HD_28024', 'upsTau', cpus=2, method="NUTS")
-    upstau.fit(2.0)
+    #upstau.fit(2.0)
     upstau.create_plots(star_name=r'$\upsilon$ Tau')      
